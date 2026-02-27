@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>HotBird</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 1040px; margin: 24px auto; padding: 0 16px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    input, select, button { padding: 10px 12px; font-size: 16px; }
+    input[type="password"] { width: min(520px, 100%); }
+    input[type="text"] { width: min(360px, 100%); }
+    button { cursor: pointer; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 12px; margin-top: 12px; }
+    .muted { color: #666; }
+    .ok { color: #1b5e20; }
+    .warn { color: #b00020; }
+    .error { color: #b00020; white-space: pre-wrap; margin-top: 10px; }
+    .results { margin-top: 12px; display: grid; gap: 10px; }
+    .bird { border: 1px solid #e3e3e3; border-radius: 12px; padding: 12px; background: #fff; }
+    .bird h3 { margin: 0 0 6px 0; font-size: 18px; }
+    .meta { display: grid; gap: 4px; }
+    .pill { display: inline-block; border: 1px solid #ddd; border-radius: 999px; padding: 2px 10px; font-size: 12px; color: #444; background: #fafafa; margin-left: 6px; }
+    .topline { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+    .small { font-size: 13px; }
+    .btnSmall { padding: 8px 10px; font-size: 14px; }
+    .right { margin-left: auto; }
+    .divider { height: 1px; background: #eee; margin: 10px 0; }
+
+    /* API key “saved” look */
+    .keySaved { border-color: #b00020; background: #fff5f5; }
+    .keySaved::placeholder { color: #b00020; opacity: 1; font-weight: 600; }
+
+    /* Location selection button highlighting */
+    .toggleBtn { border: 1px solid #ccc; border-radius: 10px; background: #f7f7f7; }
+    .toggleBtn.active { border-color: #111; background: #e9e9e9; font-weight: 700; }
+
+    .placeBox { border: 1px solid #ddd; border-radius: 10px; padding: 10px; }
+  </style>
+</head>
+
+<body>
+  <h1 style="display:flex; align-items:center; gap:10px;">
+    <img src="hotbird-icon.png"
+         alt="HotBird logo"
+         style="height:54px; width:auto;">
+    HotBird
+  </h1>
+  <p class="muted">Pick a center point (Peoria/GPS/Place) and HotBird finds unseen species + a freshest Hot Pick target.</p>
+
+  <div class="card">
+    <h2>API Key</h2>
+    <div class="row">
+      <input id="apiKey" type="password" placeholder="Paste eBird API key here" />
+      <button id="saveKeyBtn">Save key</button>
+      <button id="clearKeyBtn">Clear key</button>
+    </div>
+    <div id="keyHint" class="small muted" style="margin-top:6px;"></div>
+  </div>
+
+  <div class="card">
+    <h2>Life List (Import eBird CSV)</h2>
+    <div class="row">
+      <input id="csvFile" type="file" accept=".csv,text/csv" />
+      <button id="importMergeBtn" class="btnSmall">Import (merge)</button>
+      <button id="importReplaceBtn" class="btnSmall">Import (replace)</button>
+      <button id="exportSeenBtn" class="btnSmall">Export seen codes</button>
+      <button id="clearSeenBtn" class="btnSmall">Clear seen</button>
+    </div>
+    <div id="seenStatus" class="small muted" style="margin-top:6px;"></div>
+    <div class="small muted">
+      Best if your CSV contains <b>speciesCode</b>. If not, HotBird will match using bird names.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Search</h2>
+
+    <div class="row">
+      <button id="usePeoriaBtn" class="toggleBtn active">Use Peoria</button>
+      <button id="useGpsBtn" class="toggleBtn">Use my GPS</button>
+      <button id="usePlaceBtn" class="toggleBtn">Use Place</button>
+
+      <label class="row">Radius
+        <select id="distKm" aria-label="Radius km">
+          <option value="5">5 km</option>
+          <option value="10" selected>10 km</option>
+          <option value="25">25 km</option>
+          <option value="50">50 km</option>
+        </select>
+      </label>
+
+      <button id="fetchBtn">New Lifers</button>
+      <button id="hotPickBtn">
+        Hot Pick
+        <img src="hotbird-icon.png" 
+          style="width:40px; height:40px; vertical-align:middle; margin-left:6px;"
+          alt="">
+      </button>
+      <button id="showAllBtn" class="btnSmall">Show all</button>
+
+      <span id="locStatus" class="muted right"></span>
+    </div>
+
+    <div class="placeBox" style="margin-top:10px;">
+      <div class="row">
+        <label class="row" style="gap:6px;">
+          Place name:
+          <input id="placeInput" type="text" placeholder='e.g., "Sedona" or "Camp Verde AZ"' />
+        </label>
+        <button id="setPlaceBtn" class="btnSmall">Set place</button>
+        <span id="placeStatus" class="small muted"></span>
+      </div>
+      <div class="small muted" style="margin-top:6px;">
+        Place search uses OpenStreetMap (Nominatim) geocoding.
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="row small muted" id="summary"></div>
+    <div id="results" class="results"></div>
+    <div id="errors" class="error"></div>
+  </div>
+
+<script>
+  // ---- Storage keys ----
+  const LS_API_KEY     = "hotbird_api_key_v1";
+  const LS_SEEN_CODES  = "hotbird_seen_species_codes_v1";
+  const LS_SEEN_NAMES  = "hotbird_seen_species_names_v1";
+
+  const LS_CENTER_MODE = "hotbird_center_mode_v1";          // "peoria" | "gps" | "place"
+  const LS_PLACE_LABEL = "hotbird_place_label_v1";          // "Sedona, AZ, USA"
+  const LS_PLACE_LAT   = "hotbird_place_lat_v1";
+  const LS_PLACE_LNG   = "hotbird_place_lng_v1";
+
+  // ---- DOM ----
+  const el = (id) => document.getElementById(id);
+
+  const apiKeyInput = el("apiKey");
+  const keyHint = el("keyHint");
+
+  const csvFile = el("csvFile");
+  const seenStatus = el("seenStatus");
+
+  const usePeoriaBtn = el("usePeoriaBtn");
+  const useGpsBtn = el("useGpsBtn");
+  const usePlaceBtn = el("usePlaceBtn");
+
+  const distSelect = el("distKm");
+
+  const placeInput = el("placeInput");
+  const setPlaceBtn = el("setPlaceBtn");
+  const placeStatus = el("placeStatus");
+
+  const locStatus = el("locStatus");
+  const resultsEl = el("results");
+  const errorsEl = el("errors");
+  const summaryEl = el("summary");
+
+  // Default center: Peoria (approx)
+  const PEORIA = { lat: 33.5806, lng: -112.2374 };
+
+  let currentLatLng = { ...PEORIA };
+  let centerMode = "peoria"; // "peoria" | "gps" | "place"
+
+  // ---- localStorage helpers ----
+  function getApiKey() { return localStorage.getItem(LS_API_KEY) || ""; }
+  function setApiKey(k) { localStorage.setItem(LS_API_KEY, k); }
+  function clearApiKey() { localStorage.removeItem(LS_API_KEY); }
+
+  function loadSet(key) {
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Set();
+    try { return new Set(JSON.parse(raw)); } catch { return new Set(); }
+  }
+  function saveSet(key, setObj) { localStorage.setItem(key, JSON.stringify([...setObj])); }
+
+  function loadSeen() { return { codes: loadSet(LS_SEEN_CODES), names: loadSet(LS_SEEN_NAMES) }; }
+  function saveSeen(seen) { saveSet(LS_SEEN_CODES, seen.codes); saveSet(LS_SEEN_NAMES, seen.names); refreshSeenUI(); }
+
+  function clearSeen() {
+    localStorage.removeItem(LS_SEEN_CODES);
+    localStorage.removeItem(LS_SEEN_NAMES);
+    refreshSeenUI();
+  }
+
+  function saveCenterMode(mode) {
+    centerMode = mode;
+    localStorage.setItem(LS_CENTER_MODE, mode);
+  }
+
+  function loadPlaceFromStorage() {
+    const label = localStorage.getItem(LS_PLACE_LABEL) || "";
+    const lat = Number(localStorage.getItem(LS_PLACE_LAT));
+    const lng = Number(localStorage.getItem(LS_PLACE_LNG));
+    if (!label || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { label, lat, lng };
+  }
+
+  function savePlaceToStorage(label, lat, lng) {
+    localStorage.setItem(LS_PLACE_LABEL, label);
+    localStorage.setItem(LS_PLACE_LAT, String(lat));
+    localStorage.setItem(LS_PLACE_LNG, String(lng));
+  }
+
+  // ---- UI ----
+  function setActiveCenter(mode) {
+    usePeoriaBtn.classList.toggle("active", mode === "peoria");
+    useGpsBtn.classList.toggle("active", mode === "gps");
+    usePlaceBtn.classList.toggle("active", mode === "place");
+  }
+
+  function refreshKeyUI() {
+    const k = getApiKey();
+    if (k) {
+      apiKeyInput.classList.add("keySaved");
+      apiKeyInput.disabled = true;
+      apiKeyInput.value = "";
+      apiKeyInput.placeholder = "✅ API key saved — you can search now";
+      keyHint.textContent = "If you need to change it, click Clear key.";
+    } else {
+      apiKeyInput.classList.remove("keySaved");
+      apiKeyInput.disabled = false;
+      apiKeyInput.placeholder = "Paste eBird API key here";
+      keyHint.textContent = "";
+    }
+  }
+
+  function refreshSeenUI() {
+    const seen = loadSeen();
+    const codeCount = seen.codes.size;
+    const nameCount = seen.names.size;
+
+    if (codeCount === 0 && nameCount === 0) {
+      seenStatus.innerHTML = `<span class="muted">No life list loaded yet.</span>`;
+      return;
+    }
+
+    if (codeCount > 0) {
+      seenStatus.innerHTML = `<span class="ok">Life list loaded: ~${codeCount} species (matched by species codes).</span>`;
+      return;
+    }
+
+    const approxSpecies = Math.max(1, Math.round(nameCount / 2));
+    seenStatus.innerHTML = `<span class="ok">Life list loaded: ~${approxSpecies} species (matched by names; your CSV likely lacks speciesCode).</span>`;
+  }
+
+  function setLocationText(extra="") {
+    const base = `lat ${currentLatLng.lat.toFixed(4)}, lng ${currentLatLng.lng.toFixed(4)}`;
+    locStatus.textContent = extra ? `${base} — ${extra}` : base;
+  }
+
+  function clearOutput() {
+    resultsEl.innerHTML = "";
+    errorsEl.textContent = "";
+    summaryEl.textContent = "";
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  // ---- Radius safety ----
+  function getDistKm() {
+    const v = Number(distSelect.value || 10);
+    if (!Number.isFinite(v)) return 10;
+    return Math.max(1, Math.min(50, v));
+  }
+
+  // ---- Math ----
+  function haversineKm(lat1, lng1, lat2, lng2) {
+    const R = 6371;
+    const toRad = (d) => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a =
+      Math.sin(dLat/2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  function hoursAgo(obsDt) {
+    const t = Date.parse(obsDt);
+    if (!t) return 999999;
+    return (Date.now() - t) / 36e5;
+  }
+
+  function isWeirdTaxon(o) {
+    const n = ((o?.comName || "") + " " + (o?.sciName || "")).toLowerCase();
+    return n.includes(" sp.") || n.includes(" spp.") || n.includes("/") || n.includes("hybrid");
+  }
+
+  // ---- Geocoding (Nominatim) ----
+  async function geocodePlaceName(query) {
+    // For personal use: fine. For public apps: need caching/throttling per Nominatim policy.
+    const url = new URL("https://nominatim.openstreetmap.org/search");
+    url.searchParams.set("q", query);
+    url.searchParams.set("format", "json");
+    url.searchParams.set("limit", "1");
+
+    const res = await fetch(url.toString(), {
+      headers: {
+        // Friendly UA helps Nominatim; still not a guaranteed allowance for heavy traffic.
+        "Accept": "application/json"
+      }
+    });
+
+    if (!res.ok) throw new Error(`Geocode error: ${res.status} ${res.statusText}`);
+
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) return null;
+
+    const hit = data[0];
+    const lat = Number(hit.lat);
+    const lng = Number(hit.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+    return { label: hit.display_name || query, lat, lng };
+  }
+
+  // ---- eBird fetch ----
+  async function fetchRecentNearby(lat, lng, distKm) {
+    const apiKey = getApiKey();
+    if (!apiKey) throw new Error("No API key saved. Paste it and click Save key.");
+
+    const url = new URL("https://api.ebird.org/v2/data/obs/geo/recent");
+    url.searchParams.set("lat", lat);
+    url.searchParams.set("lng", lng);
+    url.searchParams.set("dist", distKm);
+
+    const res = await fetch(url.toString(), { headers: { "X-eBirdApiToken": apiKey } });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`eBird API error: ${res.status} ${res.statusText}\n${text}`);
+    }
+    return res.json();
+  }
+
+  async function fetchRecentNearbyOfSpecies(lat, lng, distKm, speciesCode) {
+    const apiKey = getApiKey();
+    if (!apiKey) throw new Error("No API key saved.");
+
+    const url = new URL(`https://api.ebird.org/v2/data/obs/geo/recent/${encodeURIComponent(speciesCode)}`);
+    url.searchParams.set("lat", lat);
+    url.searchParams.set("lng", lng);
+    url.searchParams.set("dist", distKm);
+
+    const res = await fetch(url.toString(), { headers: { "X-eBirdApiToken": apiKey } });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Species API error (${speciesCode}): ${res.status} ${res.statusText}\n${text}`);
+    }
+    return res.json();
+  }
+
+  // ---- Dedup + filtering ----
+  function dedupeToSpeciesMostRecent(observations) {
+    const byKey = new Map();
+    for (const o of observations) {
+      if (!o) continue;
+      const code = (o.speciesCode || "").trim().toLowerCase();
+      const com = (o.comName || "").trim();
+      const sci = (o.sciName || "").trim();
+      const key = code ? `code:${code}` : `name:${com}__${sci}`;
+
+      const prev = byKey.get(key);
+      const t = Date.parse(o.obsDt) || 0;
+      const prevT = prev ? (Date.parse(prev.obsDt) || 0) : -1;
+      if (!prev || t > prevT) byKey.set(key, o);
+    }
+    const unique = [...byKey.values()];
+    unique.sort((a, b) => (Date.parse(b.obsDt) || 0) - (Date.parse(a.obsDt) || 0));
+    return unique;
+  }
+
+  function isSeen(o, seen) {
+    const code = (o?.speciesCode || "").trim().toLowerCase();
+    if (code && seen.codes.has(code)) return true;
+
+    const com = (o?.comName || "").trim().toLowerCase();
+    const sci = (o?.sciName || "").trim().toLowerCase();
+    if (com && seen.names.has(com)) return true;
+    if (sci && seen.names.has(sci)) return true;
+
+    return false;
+  }
+
+  function filterUnseen(speciesObs) {
+    const seen = loadSeen();
+    return speciesObs.filter(o => !isSeen(o, seen));
+  }
+
+  // ---- Render ----
+  function openMaps(lat, lng) {
+    const q = `${lat},${lng}`;
+    const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+    window.open(url, "_blank");
+  }
+
+  function renderList(items, totalObs, label, center) {
+    resultsEl.innerHTML = "";
+    const frag = document.createDocumentFragment();
+
+    for (const o of items) {
+      const card = document.createElement("div");
+      card.className = "bird";
+
+      const name = o.comName || o.sciName || o.speciesCode || "(unknown)";
+      const loc = o.locName || "(unknown location)";
+      const when = o.obsDt || "(unknown time)";
+      const code = (o.speciesCode || "").toLowerCase();
+
+      const hasCoords = (o.lat != null && o.lng != null);
+      const dist = (center && hasCoords) ? haversineKm(center.lat, center.lng, Number(o.lat), Number(o.lng)) : null;
+
+      const markBtnId = `mark_${Math.random().toString(16).slice(2)}`;
+      const mapBtnId  = `map_${Math.random().toString(16).slice(2)}`;
+
+      card.innerHTML = `
+        <div class="topline">
+          <div>
+            <h3>${escapeHtml(name)} ${code ? `<span class="pill">${escapeHtml(code)}</span>` : ``}</h3>
+            <div class="meta">
+              ${dist != null ? `<div><span class="muted">Distance:</span> ${dist.toFixed(1)} km</div>` : ``}
+              <div><span class="muted">Last seen:</span> ${escapeHtml(when)} (${hoursAgo(when).toFixed(1)}h ago)</div>
+              <div><span class="muted">Where:</span> ${escapeHtml(loc)}</div>
+            </div>
+          </div>
+          <div class="row">
+            <button class="btnSmall" id="${markBtnId}">Mark seen</button>
+            <button class="btnSmall" id="${mapBtnId}" ${hasCoords ? "" : "disabled"}>Maps</button>
+          </div>
+        </div>
+      `;
+
+      setTimeout(() => {
+        const markBtn = document.getElementById(markBtnId);
+        const mapBtn = document.getElementById(mapBtnId);
+
+        if (markBtn) {
+          markBtn.addEventListener("click", () => {
+            const seen = loadSeen();
+            if (code) seen.codes.add(code);
+            if (o.comName) seen.names.add(o.comName.trim().toLowerCase());
+            if (o.sciName) seen.names.add(o.sciName.trim().toLowerCase());
+            saveSeen(seen);
+
+            card.remove();
+            const remaining = resultsEl.querySelectorAll(".bird").length;
+            summaryEl.textContent = `${label}: ${remaining} shown.`;
+          });
+        }
+
+        if (mapBtn && hasCoords) {
+          mapBtn.addEventListener("click", () => openMaps(Number(o.lat), Number(o.lng)));
+        }
+      }, 0);
+
+      frag.appendChild(card);
+    }
+
+    resultsEl.appendChild(frag);
+
+    if (label === "All species") summaryEl.textContent = `Fetched ${totalObs} observations → ${items.length} unique species (no life list filtering).`;
+    else summaryEl.textContent = `${label}: ${items.length} shown.`;
+  }
+
+  // ---- CSV import/export ----
+  function parseCsv(text) {
+    const rows = [];
+    let row = [];
+    let cell = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      const next = text[i + 1];
+
+      if (inQuotes) {
+        if (c === '"' && next === '"') { cell += '"'; i++; }
+        else if (c === '"') inQuotes = false;
+        else cell += c;
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === ',') { row.push(cell); cell = ""; }
+        else if (c === '\n') { row.push(cell); rows.push(row); row = []; cell = ""; }
+        else if (c === '\r') {}
+        else cell += c;
+      }
+    }
+    row.push(cell);
+    rows.push(row);
+    return rows.filter(r => r.some(v => String(v).trim() !== ""));
+  }
+
+  function normalizeHeader(h) {
+    return String(h || "").trim().toLowerCase().replaceAll(" ", "").replaceAll("_", "");
+  }
+
+  function importLifeListFromCsvText(csvText, replaceExisting) {
+    const rows = parseCsv(csvText);
+    if (!rows.length) throw new Error("CSV appears empty.");
+
+    const header = rows[0].map(normalizeHeader);
+    const idx = (variants) => {
+      for (const v of variants) {
+        const j = header.indexOf(normalizeHeader(v));
+        if (j !== -1) return j;
+      }
+      return -1;
+    };
+
+    const iSpeciesCode = idx(["speciescode","speciesCode","species_code"]);
+    const iComName     = idx(["comname","commonname","primarycommonname","common"]);
+    const iSciName     = idx(["sciname","scientificname","scientific"]);
+
+    if (iSpeciesCode === -1 && iComName === -1 && iSciName === -1) {
+      throw new Error("Could not find speciesCode/commonName/scientificName columns in your CSV header.");
+    }
+
+    const seen = replaceExisting ? { codes: new Set(), names: new Set() } : loadSeen();
+
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      const code = (iSpeciesCode !== -1 ? (row[iSpeciesCode] || "") : "").trim().toLowerCase();
+      const com  = (iComName !== -1 ? (row[iComName] || "") : "").trim().toLowerCase();
+      const sci  = (iSciName !== -1 ? (row[iSciName] || "") : "").trim().toLowerCase();
+
+      if (code) seen.codes.add(code);
+      if (com)  seen.names.add(com);
+      if (sci)  seen.names.add(sci);
+    }
+
+    saveSeen(seen);
+    return { hadSpeciesCode: iSpeciesCode !== -1 };
+  }
+
+  function exportSeenCodesCsv() {
+    const seen = loadSeen();
+    const lines = ["speciesCode", ...seen.codes];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "hotbird_seen_speciesCodes.csv";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // ---- Hot Pick ----
+  async function scoreSpeciesAndPickFreshestTarget(center, distKm, speciesCode) {
+    const sightings = await fetchRecentNearbyOfSpecies(center.lat, center.lng, distKm, speciesCode);
+    const valid = sightings
+      .filter(s => s && s.lat != null && s.lng != null && s.obsDt)
+      .map(s => ({
+        s,
+        h: hoursAgo(s.obsDt),
+        d: haversineKm(center.lat, center.lng, Number(s.lat), Number(s.lng))
+      }));
+
+    if (!valid.length) return null;
+
+    valid.sort((a, b) => (a.h - b.h) || (a.d - b.d));
+    const target = valid[0].s;
+
+    const uniqueLocs = new Set(valid.map(x => x.s.locId || x.s.locName).filter(Boolean));
+    const locCount = Math.max(1, uniqueLocs.size);
+
+    const freshestH = valid[0].h;
+    const closestD = valid.reduce((m, x) => Math.min(m, x.d), Infinity);
+
+    const freshnessScore = 1 / (1 + freshestH);
+    const confidenceScore = Math.log2(locCount + 1);
+    const distanceScore = 1 / (1 + closestD);
+
+    const finalScore = (0.70 * freshnessScore) + (0.25 * (confidenceScore / 3)) + (0.05 * distanceScore);
+
+    return { speciesCode, target, locCount, freshestH, closestD, finalScore };
+  }
+
+  async function runUnseenList() {
+    clearOutput();
+    summaryEl.textContent = "Fetching...";
+    const distKm = getDistKm();
+
+    const data = await fetchRecentNearby(currentLatLng.lat, currentLatLng.lng, distKm);
+    const unique = dedupeToSpeciesMostRecent(data);
+    const unseen = filterUnseen(unique);
+
+    renderList(unseen, data.length, "Unseen species", currentLatLng);
+  }
+
+  async function runShowAll() {
+    clearOutput();
+    summaryEl.textContent = "Fetching...";
+    const distKm = getDistKm();
+
+    const data = await fetchRecentNearby(currentLatLng.lat, currentLatLng.lng, distKm);
+    const unique = dedupeToSpeciesMostRecent(data);
+
+    renderList(unique, data.length, "All species", currentLatLng);
+  }
+
+  async function runHotPick() {
+    clearOutput();
+    summaryEl.textContent = "Picking the hottest lifer (freshest target)...";
+    const distKm = getDistKm();
+
+    const data = await fetchRecentNearby(currentLatLng.lat, currentLatLng.lng, distKm);
+    const unique = dedupeToSpeciesMostRecent(data);
+    const unseen = filterUnseen(unique).filter(o => o?.speciesCode && !isWeirdTaxon(o));
+
+    if (!unseen.length) {
+      summaryEl.textContent = "No unseen species found in this radius (based on your life list).";
+      return;
+    }
+
+    const shortlist = unseen
+      .map(o => ({ code: o.speciesCode.toLowerCase(), h: hoursAgo(o.obsDt) }))
+      .sort((a, b) => a.h - b.h)
+      .slice(0, 8)
+      .map(x => x.code);
+
+    const scored = [];
+    for (const code of shortlist) {
+      try {
+        const s = await scoreSpeciesAndPickFreshestTarget(currentLatLng, distKm, code);
+        if (s) scored.push(s);
+      } catch {}
+    }
+
+    if (!scored.length) {
+      summaryEl.textContent = "Hot Pick couldn’t score candidates (no usable sightings). Showing unseen list instead.";
+      renderList(unseen, data.length, "Unseen species", currentLatLng);
+      return;
+    }
+
+    scored.sort((a, b) => b.finalScore - a.finalScore);
+    const best = scored[0];
+    const t = best.target;
+
+    const d = haversineKm(currentLatLng.lat, currentLatLng.lng, Number(t.lat), Number(t.lng));
+    const ageH = hoursAgo(t.obsDt);
+
+    summaryEl.textContent =
+      `Hot Pick 🔥: ${t.comName} — ${d.toFixed(1)} km away, ${ageH.toFixed(1)}h ago, ${best.locCount} nearby location(s).`;
+
+    renderList([t], data.length, "Hot Pick", currentLatLng);
+  }
+
+  // ---- Button wiring ----
+  el("saveKeyBtn").addEventListener("click", () => {
+    const k = apiKeyInput.value.trim();
+    if (!k) return;
+    setApiKey(k);
+    refreshKeyUI();
+  });
+
+  el("clearKeyBtn").addEventListener("click", () => { clearApiKey(); refreshKeyUI(); });
+
+  el("importMergeBtn").addEventListener("click", async () => {
+    try {
+      const file = csvFile.files?.[0];
+      if (!file) throw new Error("Choose your eBird CSV file first.");
+      const text = await file.text();
+      const res = importLifeListFromCsvText(text, false);
+      refreshSeenUI();
+      seenStatus.innerHTML += res.hadSpeciesCode
+        ? ` <span class="muted">(imported using species codes)</span>`
+        : ` <span class="warn">(your CSV didn’t include speciesCode, so HotBird is matching by names)</span>`;
+    } catch (e) {
+      seenStatus.innerHTML = `<span class="error">${escapeHtml(e)}</span>`;
+    }
+  });
+
+  el("importReplaceBtn").addEventListener("click", async () => {
+    try {
+      const file = csvFile.files?.[0];
+      if (!file) throw new Error("Choose your eBird CSV file first.");
+      const text = await file.text();
+      const res = importLifeListFromCsvText(text, true);
+      refreshSeenUI();
+      seenStatus.innerHTML += res.hadSpeciesCode
+        ? ` <span class="muted">(imported using species codes)</span>`
+        : ` <span class="warn">(your CSV didn’t include speciesCode, so HotBird is matching by names)</span>`;
+    } catch (e) {
+      seenStatus.innerHTML = `<span class="error">${escapeHtml(e)}</span>`;
+    }
+  });
+
+  el("exportSeenBtn").addEventListener("click", () => exportSeenCodesCsv());
+
+  el("clearSeenBtn").addEventListener("click", () => { clearSeen(); seenStatus.innerHTML = `<span class="muted">No life list loaded yet.</span>`; });
+
+  usePeoriaBtn.addEventListener("click", () => {
+    currentLatLng = { ...PEORIA };
+    saveCenterMode("peoria");
+    setActiveCenter("peoria");
+    setLocationText("Peoria");
+  });
+
+  useGpsBtn.addEventListener("click", () => {
+    if (!navigator.geolocation) { alert("Geolocation not supported in this browser."); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        currentLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        saveCenterMode("gps");
+        setActiveCenter("gps");
+        setLocationText("GPS");
+      },
+      (err) => alert(`GPS error: ${err.message}`)
+    );
+  });
+
+  usePlaceBtn.addEventListener("click", () => {
+    // Only switches mode; to set coordinates, use "Set place".
+    saveCenterMode("place");
+    setActiveCenter("place");
+    const saved = loadPlaceFromStorage();
+    if (saved) {
+      currentLatLng = { lat: saved.lat, lng: saved.lng };
+      setLocationText(saved.label);
+      placeStatus.textContent = `Using saved place: ${saved.label}`;
+    } else {
+      setLocationText("Place (not set)");
+      placeStatus.textContent = "Type a place name and click Set place.";
+    }
+  });
+
+  setPlaceBtn.addEventListener("click", async () => {
+    try {
+      const q = placeInput.value.trim();
+      if (!q) { placeStatus.textContent = "Enter a place name first."; return; }
+
+      placeStatus.textContent = "Finding place...";
+      const hit = await geocodePlaceName(q);
+      if (!hit) {
+        placeStatus.textContent = "No match found. Try adding a state/country (e.g., “Sedona AZ”).";
+        return;
+      }
+
+      savePlaceToStorage(hit.label, hit.lat, hit.lng);
+      currentLatLng = { lat: hit.lat, lng: hit.lng };
+      saveCenterMode("place");
+      setActiveCenter("place");
+      setLocationText(hit.label);
+      placeStatus.textContent = `Using: ${hit.label}`;
+    } catch (e) {
+      placeStatus.textContent = `Error: ${String(e)}`;
+    }
+  });
+
+  el("fetchBtn").addEventListener("click", async () => {
+    try { await runUnseenList(); }
+    catch (e) { errorsEl.textContent = String(e); summaryEl.textContent = ""; }
+  });
+
+  el("showAllBtn").addEventListener("click", async () => {
+    try { await runShowAll(); }
+    catch (e) { errorsEl.textContent = String(e); summaryEl.textContent = ""; }
+  });
+
+  el("hotPickBtn").addEventListener("click", async () => {
+    try { await runHotPick(); }
+    catch (e) { errorsEl.textContent = String(e); summaryEl.textContent = ""; }
+  });
+
+  // ---- Init ----
+  refreshKeyUI();
+  refreshSeenUI();
+
+  // Load prior mode and place, if any
+  const savedMode = localStorage.getItem(LS_CENTER_MODE);
+  const savedPlace = loadPlaceFromStorage();
+
+  if (savedMode === "place" && savedPlace) {
+    currentLatLng = { lat: savedPlace.lat, lng: savedPlace.lng };
+    saveCenterMode("place");
+    setActiveCenter("place");
+    setLocationText(savedPlace.label);
+    placeStatus.textContent = `Using saved place: ${savedPlace.label}`;
+  } else if (savedMode === "gps") {
+    // Don't auto-trigger GPS permissions; just show mode button state.
+    saveCenterMode("gps");
+    setActiveCenter("gps");
+    setLocationText("GPS (click “Use my GPS” to refresh)");
+  } else {
+    saveCenterMode("peoria");
+    setActiveCenter("peoria");
+    setLocationText("Peoria");
+  }
+</script>
+</body>
+</html>
