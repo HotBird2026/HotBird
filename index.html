@@ -232,6 +232,7 @@ let userLng = null;
 
 let lifeCodes = new Set();
 let lifeNames = new Set();
+let lastResultsMode = null; // "lifers" or "hot"
 
 /* =========================
    Boot: Restore saved state
@@ -381,6 +382,49 @@ function clearLifeList() {
   localStorage.removeItem(LS_LIFE_META);
   updateLifeStatus();
   alert("Life list cleared.");
+}
+
+function persistLifeList() {
+  const existingMeta = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(LS_LIFE_META) || "{}");
+    } catch {
+      return {};
+    }
+  })();
+
+  localStorage.setItem(LS_LIFE_CODES, JSON.stringify([...lifeCodes]));
+  localStorage.setItem(LS_LIFE_NAMES, JSON.stringify([...lifeNames]));
+  localStorage.setItem(LS_LIFE_META, JSON.stringify({
+    count: Math.max(lifeCodes.size, lifeNames.size),
+    importedAt: existingMeta.importedAt || new Date().toLocaleString()
+  }));
+
+  updateLifeStatus();
+}
+
+function markBirdSeen(speciesCode, comName) {
+  if (speciesCode) lifeCodes.add(speciesCode);
+  if (comName) lifeNames.add(comName.toLowerCase());
+
+  persistLifeList();
+
+  if (lastResultsMode === "lifers") {
+    getNewLifers();
+  } else if (lastResultsMode === "hot") {
+    getHotPick();
+  } else {
+    alert(`Marked as seen: ${comName || speciesCode}`);
+  }
+}
+
+function escapeJsString(s) {
+  return String(s || "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll("'", "\\'")
+    .replaceAll('"', '\\"')
+    .replaceAll("\n", "\\n")
+    .replaceAll("\r", "");
 }
 
 function parseCSVLine(line) {
@@ -544,6 +588,7 @@ async function fetchRecentGeo() {
    Actions
 ========================= */
 async function getNewLifers() {
+  lastResultsMode = "lifers";
   const hideWeird = document.getElementById("hideWeirdTaxa").checked;
   const obs = await fetchRecentGeo();
 
@@ -580,6 +625,7 @@ async function getNewLifers() {
 }
 
 async function getHotPick() {
+  lastResultsMode = "hot";
   const hideWeird = document.getElementById("hideWeirdTaxa").checked;
   const obs = await fetchRecentGeo();
 
@@ -669,6 +715,7 @@ function renderBirds(birds, isHot) {
       <div class="spacer"></div>
       <div class="row">
         <button onclick="openMap(${b.lat}, ${b.lng})">Open in Maps</button>
+        <button onclick="markBirdSeen('${escapeJsString(b.speciesCode || "")}', '${escapeJsString(b.comName || "")}')">Mark Seen</button>
       </div>
     `;
 
